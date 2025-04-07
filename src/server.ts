@@ -70,8 +70,8 @@ router.get('/lnurlp/:username', async (req: Request, res: Response): Promise<voi
 
   const responseData: LNURLPayResponse = {
     callback: `${req.protocol}://${req.get('host')}/payreq/${data.uuid}`,
-    maxSendable: 100000000000,
-    minSendable: 1000,
+    maxSendable: 25000000000,
+    minSendable: 1000000,
     metadata: JSON.stringify([
       ['text/plain', `Pay to manna wallet user: ${userName}`],
       ['text/identifier', `${userName}@mannabitcoin.com`],
@@ -132,7 +132,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const addressSignature = Buffer.from(keys.signSchnorr(liquidAddressHash)).toString('hex');
 
   try {
-    console.log(`${req.protocol}://${req.get('host')}/webhook/swap`);
+    console.log(`https://${req.get('host')}/webhook/swap`);
     const boltzResponse = await axios.post<BoltzResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse`, {
       invoiceAmount: Math.floor(amountValue / 1000),
       to: 'L-BTC',
@@ -146,7 +146,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       referralId: 'Manna',
       addressSignature: addressSignature,
       webhook: {
-        url: `${req.protocol}://${req.get('host')}/webhook/swap`,
+        url: `https://${req.get('host')}/webhook/swap`,
         hashSwapId: false,
         status: ['transaction.mempool']
       }
