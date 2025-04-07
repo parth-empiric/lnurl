@@ -85,7 +85,6 @@ router.get('/lnurlp/:username', async (req: Request, res: Response): Promise<voi
 
 // Callback endpoint for generating Bolt11 invoice
 router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> => {
-
   const uuid = req.params.uuid;
   const amount = req.query.amount as string;
   const note = (req.query.note || req.query.label) as string | undefined;
@@ -118,7 +117,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const user = data as User;
   const liquidAddress = user.liquid_addresses.length > 0
     ? user.liquid_addresses[0]
-    : user.used_addresses[Math.floor(Math.random() * user.used_addresses.length)];
+    : user.used_addresses[0];
 
 
   const preimage = randomBytes(32);
@@ -132,12 +131,11 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const addressSignature = Buffer.from(keys.signSchnorr(liquidAddressHash)).toString('hex');
 
   try {
-    console.log(`https://${req.get('host')}/webhook/swap`);
     const boltzResponse = await axios.post<BoltzResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse`, {
       invoiceAmount: Math.floor(amountValue / 1000),
       to: 'L-BTC',
       from: 'BTC',
-      claimCovenant: true,
+      // claimCovenant: false,
       claimPublicKey: pubKeyHex,
       preimageHash: preimageHash,
       claimAddress: liquidAddress,
@@ -165,7 +163,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       .from('users')
       .update({
         liquid_addresses: user.liquid_addresses,
-        used_addresses: user.used_addresses,
+        used_addresses: Array.from(new Set(user.used_addresses)),
       })
       .eq('uuid', uuid);
 
@@ -210,9 +208,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
 
 // Webhook endpoint for Boltz swap updates
 router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
-  console.log(req.body);
-
-  if(!req.body.event) {
+  if(req.body.event !== 'swap.update') {
     res.json({ message: 'No event found!' });
     return;
   }
@@ -222,7 +218,7 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const { event, data } = req.body;  
+  const { data } = req.body;
   const { id: swapId, status } = data;
 
   if (status !== 'transaction.mempool') {
@@ -257,6 +253,8 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
 
     const keys: ECPairFactory = ECPairFactory(ecc).fromPrivateKey(Buffer.from(swapData.privateKey, 'hex'));
     const boltzPublicKey = Buffer.from(swapData.refundPubKey, 'hex');
+    console.log(keys.publicKey.toString('hex'));
+    console.log(keys.privateKey.toString('hex'));
 
     // Create a musig signing session
     const musig = new Musig(zkp, keys, randomBytes(32), [
