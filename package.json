@@ -1,0 +1,35 @@
+{
+  "name": "lnurl",
+  "version": "1.0.0",
+  "description": "LNURL-pay server with Boltz swap integration",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts",
+    "build": "tsc",
+    "watch": "tsc -w",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@noble/secp256k1": "^2.0.0",
+    "@supabase/supabase-js": "^2.39.7",
+    "@vulpemventures/secp256k1-zkp": "^3.1.0",
+    "axios": "^1.6.7",
+    "boltz-core": "3.0.0",
+    "dotenv": "^16.4.5",
+    "ecpair": "^3.0.0",
+    "elliptic": "^6.5.4",
+    "express": "^4.18.3",
+    "tiny-secp256k1": "^2.2.3"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.24",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
