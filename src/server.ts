@@ -16,10 +16,7 @@ import {
   detectSwap,
   targetFee,
 } from 'boltz-core';
-import {
-  TaprootUtils,
-  constructClaimTransaction,
-} from 'boltz-core';
+import { TaprootUtils as LiquidTaprootUtils, constructClaimTransaction } from "boltz-core/dist/lib/liquid/index.js";
 import { init } from 'boltz-core/dist/lib/liquid/init.js';
 import { default as zkpInit, Secp256k1ZKP } from '@vulpemventures/secp256k1-zkp';
 
@@ -208,12 +205,12 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
 
 // Webhook endpoint for Boltz swap updates
 router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
-  if(req.body.event !== 'swap.update') {
+  if (req.body.event !== 'swap.update') {
     res.json({ message: 'No event found!' });
     return;
   }
 
-  if(!req.body.data || !req.body.data.id || !req.body.data.status) {
+  if (!req.body.data || !req.body.data.id || !req.body.data.status) {
     res.json({ message: 'No data found!' });
     return;
   }
@@ -234,7 +231,7 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     });
     const transaction = transactionResponse.data;
 
-    if(!transaction) {
+    if (!transaction) {
       res.json({ message: 'No lockup transaction found!' });
       return;
     }
@@ -253,17 +250,15 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
 
     const keys: ECPairFactory = ECPairFactory(ecc).fromPrivateKey(Buffer.from(swapData.privateKey, 'hex'));
     const boltzPublicKey = Buffer.from(swapData.refundPubKey, 'hex');
-    console.log(keys.publicKey.toString('hex'));
-    console.log(keys.privateKey.toString('hex'));
 
     // Create a musig signing session
     const musig = new Musig(zkp, keys, randomBytes(32), [
       boltzPublicKey,
-      Buffer.from(swapData.pubKey, 'hex'),
+      Buffer.from(keys.publicKey),
     ]);
 
     // Tweak the key with the swap tree
-    const tweakedKey = TaprootUtils.tweakMusig(
+    const tweakedKey = LiquidTaprootUtils.tweakMusig(
       musig,
       SwapTreeSerializer.deserializeSwapTree(swapData.swapTree).tree,
     );
@@ -272,11 +267,6 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     const lockupTx = Transaction.fromHex(transaction.hex);
     const swapOutput = detectSwap(tweakedKey, lockupTx);
 
-    console.log(tweakedKey);
-    console.log(lockupTx.outs.map(o => o.script));
-    console.log(lockupTx);
-    console.log(swapOutput);
-    
     if (!swapOutput) {
       res.status(400).json({ error: 'No swap output found in lockup transaction' });
       return;
@@ -292,17 +282,14 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
           cooperative: true,
           type: OutputType.Taproot,
           txHash: lockupTx.getHash(),
-          value: Number(swapOutput.value),
-          
-          // blindingPrivateKey: Buffer.from(swapData.blindingKey, 'hex'),
+          // value: Number(swapOutput.value),
+          blindingPrivateKey: Buffer.from(swapData.blindingKey, 'hex'),
         }],
         address.toOutputScript(swapData.claimAddress, networks.liquid),
         fee,
         false
-      ),true,
+      ), true,
     );
-
-    console.log(claimTx);
 
     // Get Boltz's partial signature
     const boltzSig = (
@@ -317,27 +304,22 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
       )
     ).data;
 
-    console.log(boltzSig);
-
     // Aggregate nonces
     musig.aggregateNonces([
       [boltzPublicKey, Buffer.from(boltzSig.pubNonce, 'hex')],
     ]);
-
-    console.log(musig);
 
     // Initialize signing session
     musig.initializeSession(
       claimTx.hashForWitnessV1(
         0,
         [swapOutput.script],
-        [Number(swapOutput.value)],
+        [{ value: swapOutput.value, asset: swapOutput.asset }],
+        // [Number(swapOutput.value)],
         Transaction.SIGHASH_DEFAULT,
         networks.liquid.genesisBlockHash,
       ),
     );
-
-    console.log(musig);
 
     // Add Boltz's partial signature
     musig.addPartial(
@@ -345,17 +327,11 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
       Buffer.from(boltzSig.partialSignature, 'hex'),
     );
 
-    console.log(musig);
-
     // Create our partial signature
     musig.signPartial();
 
-    console.log(musig);
-
     // Add witness with aggregated signature
     claimTx.ins[0].witness = [musig.aggregatePartials()];
-
-    console.log(claimTx);
 
     // Broadcast the claim transaction
     await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, {
@@ -373,7 +349,7 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
 
 const app = express();
 app.use(express.json());
-app.use(router);const PORT = process.env.PORT || 3000;
+app.use(router); const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
