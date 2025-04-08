@@ -85,7 +85,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   console.log('payreq', req.params, req.query);
   const uuid = req.params.uuid;
   const amount = req.query.amount as string;
-  const note = (req.query.note || req.query.label) as string | undefined;
+  const note = (req.query.note || req.query.label || req.query.comment || req.query.message) as string | undefined;
   const amountValue = parseInt(amount || '', 10);
 
   if (!amount || isNaN(amountValue) || amountValue < 1000000 || amountValue > 25000000000) {
