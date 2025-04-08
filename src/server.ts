@@ -2,11 +2,20 @@ import express, { Request, Response, Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import {
+  User,
+  Swap,
+  LNURLPayResponse,
+  BoltzResponse,
+  PaymentResponse,
+  LockupTransactionResponse,
+  BoltzClaimResponse
+} from './types.js';
 
 // for swap
 import { randomBytes } from 'crypto';
 import { ECPairFactory } from 'ecpair';
-import { Transaction, address, crypto, networks } from 'liquidjs-lib';
+import { Transaction, address as LiquidAddress, crypto, networks } from 'liquidjs-lib';
 import * as ecc from 'tiny-secp256k1';
 // for claim
 import {
@@ -19,14 +28,7 @@ import {
 import { TaprootUtils as LiquidTaprootUtils, constructClaimTransaction } from "boltz-core/dist/lib/liquid/index.js";
 import { init } from 'boltz-core/dist/lib/liquid/init.js';
 import { default as zkpInit, Secp256k1ZKP } from '@vulpemventures/secp256k1-zkp';
-
-import {
-  User,
-  Swap,
-  LNURLPayResponse,
-  BoltzResponse,
-  PaymentResponse
-} from './types.js';
+import { LiquidSwapTree } from 'boltz-core/dist/lib/consts/Types.js';
 
 
 dotenv.config();
@@ -47,17 +49,15 @@ let zkp: Secp256k1ZKP;
 })();
 
 // LNURL-pay endpoint
-router.get('/lnurlp/:username', async (req: Request, res: Response): Promise<void> => {
-
+router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response): Promise<void> => {
   const userName = req.params.username;
-
   const { data } = await supabase
     .from('users')
     .select('uuid')
     .eq('user_name', userName)
     .maybeSingle();
 
-  if (data == null) {
+  if (!data) {
     res.status(200).json({
       status: 'ERROR',
       reason: 'Unable to find valid user wallet.',
@@ -103,7 +103,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
     .eq('uuid', uuid)
     .maybeSingle();
 
-  if (data == null) {
+  if (!data) {
     res.status(404).json({
       status: 'ERROR',
       reason: 'LNURL Pay Transaction does not exist.',
@@ -114,16 +114,23 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const user = data as User;
   const liquidAddress = user.liquid_addresses.length > 0
     ? user.liquid_addresses[0]
-    : user.used_addresses[0];
+    : user.used_addresses.length > 0
+      ? user.used_addresses[0]
+      : null;
 
+  if (!liquidAddress) {
+    res.status(404).json({
+      status: 'ERROR',
+      reason: 'No liquid address found.',
+    });
+    return;
+  }
 
   const preimage = randomBytes(32);
   const preimageHash = crypto.sha256(preimage).toString('hex');
-
   const keys = ECPairFactory(ecc).makeRandom();
   const privKeyHex = Buffer.from(keys.privateKey).toString('hex');
   const pubKeyHex = Buffer.from(keys.publicKey).toString('hex');
-
   const liquidAddressHash = crypto.sha256(Buffer.from(liquidAddress, 'utf-8'));
   const addressSignature = Buffer.from(keys.signSchnorr(liquidAddressHash)).toString('hex');
 
@@ -137,13 +144,11 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       preimageHash: preimageHash,
       claimAddress: liquidAddress,
       address: liquidAddress,
-      description: note,
-      referralId: 'Manna',
       addressSignature: addressSignature,
+      description: note ?? 'Payment to manna wallet user: ' + user.user_name,
+      referralId: 'Manna',
       webhook: {
         url: `https://${req.get('host')}/webhook/swap`,
-        hashSwapId: false,
-        status: ['transaction.mempool']
       }
     });
 
@@ -159,12 +164,11 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
     await supabase
       .from('users')
       .update({
-        liquid_addresses: user.liquid_addresses,
+        liquid_addresses: Array.from(new Set(user.liquid_addresses)),
         used_addresses: Array.from(new Set(user.used_addresses)),
       })
       .eq('uuid', uuid);
 
-    // Store swap details
     const swap: Swap = {
       swap_id: boltzData.id,
       wallet_id: user.uuid,
@@ -203,6 +207,115 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   }
 });
 
+const claimSwap = async (swapId: string) => {
+  const { data } = await supabase
+    .from('swaps')
+    .select('*')
+    .eq('swap_id', swapId)
+    .maybeSingle();
+
+  if (!data) {
+    throw new Error('Swap not found');
+  }
+
+  const swapData = data as Swap;
+  const transaction = await axios.get<LockupTransactionResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse/${swapId}/transaction`);
+  if (!transaction) {
+    throw new Error('Transaction not found');
+  }
+
+  const claimTransaction = await createReverseClaimTransaction(swapData, transaction.data.hex, true);
+  if (!claimTransaction) {
+    throw new Error('Failed to generate claim transaction');
+  }
+
+  await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() });
+  console.log('Claim transaction broadcast successfully');
+}
+
+const createReverseClaimTransaction = async (
+  swapData: Swap,
+  transactionHex: string,
+  cooperative: boolean = true,
+): Promise<Transaction | undefined> => {
+  console.log(`Claiming Taproot swap cooperatively: ${cooperative}`);
+  const keys: ECPairFactory = ECPairFactory(ecc).fromPrivateKey(Buffer.from(swapData.privateKey, 'hex'));
+  const boltzPublicKey = Buffer.from(swapData.refundPubKey, 'hex');
+  const swapTree = SwapTreeSerializer.deserializeSwapTree(swapData.swapTree) as LiquidSwapTree;
+  const publicKey = Buffer.from(keys.publicKey);
+  const lockupTx = Transaction.fromHex(transactionHex);
+  const preimage = Buffer.from(swapData.preImage, 'hex');
+  const swapBlindingKey = Buffer.from(swapData.blindingKey, 'hex');
+
+  const musig = new Musig(zkp, keys, randomBytes(32), [boltzPublicKey, publicKey]);
+  const tweakedKey = LiquidTaprootUtils.tweakMusig(musig, swapTree.tree);
+  const swapOutput = detectSwap(tweakedKey, lockupTx);
+
+  if (!swapOutput) {
+    throw new Error('No swap output found in lockup transaction');
+  }
+
+  const claimScript = LiquidAddress.toOutputScript(swapData.claimAddress, networks.liquid);
+  const claimTxBlindingKey = LiquidAddress.fromConfidential(swapData.claimAddress).blindingKey;
+
+  const claimTx = targetFee(0.1, (fee) =>
+    constructClaimTransaction(
+      [{
+        ...swapOutput,
+        cooperative,
+        swapTree,
+        keys,
+        preimage,
+        type: OutputType.Taproot,
+        txHash: lockupTx.getHash(),
+        blindingPrivateKey: swapBlindingKey,
+        internalKey: musig.getAggregatedPublicKey(),
+      }],
+      claimScript,
+      fee,
+      true,
+      networks.liquid,
+      claimTxBlindingKey,
+    ), true,
+  );
+  if (!cooperative) {
+    return claimTx;
+  }
+
+  try {
+    const boltzSig = (
+      await axios.post<BoltzClaimResponse>(
+        `${process.env.BOLTZ_API_URL}/swap/reverse/${swapData.swap_id}/claim`,
+        {
+          index: 0,
+          transaction: claimTx.toHex(),
+          preimage: swapData.preImage,
+          pubNonce: Buffer.from(musig.getPublicNonce()).toString('hex'),
+        },
+      )
+    ).data;
+
+    musig.aggregateNonces([[boltzPublicKey, Buffer.from(boltzSig.pubNonce, 'hex')]]);
+    musig.initializeSession(
+      claimTx.hashForWitnessV1(
+        0,
+        [swapOutput.script],
+        [{ value: swapOutput.value, asset: swapOutput.asset }],
+        Transaction.SIGHASH_DEFAULT,
+        networks.liquid.genesisBlockHash,
+      ),
+    );
+    musig.signPartial();
+    musig.addPartial(boltzPublicKey, Buffer.from(boltzSig.partialSignature, 'hex'));
+
+    claimTx.ins[0].witness = [musig.aggregatePartials()];
+    return claimTx;
+  } catch (e) {
+    console.warn("Uncooperative Taproot claim because", e);
+    return createReverseClaimTransaction(swapData, transactionHex, false);
+  }
+};
+
 // Webhook endpoint for Boltz swap updates
 router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
   if (req.body.event !== 'swap.update') {
@@ -215,131 +328,14 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     return;
   }
 
-  const { data } = req.body;
-  const { id: swapId, status } = data;
-
+  const { id: swapId, status } = req.body.data;
   if (status !== 'transaction.mempool') {
     res.json({ message: 'Status not handled' });
     return;
   }
 
   try {
-    const transactionResponse = await axios.get(`${process.env.BOLTZ_API_URL}/swap/reverse/${swapId}/transaction`, {
-      headers: {
-        'accept': 'application/json'
-      }
-    });
-    const transaction = transactionResponse.data;
-
-    if (!transaction) {
-      res.json({ message: 'No lockup transaction found!' });
-      return;
-    }
-
-    // Get swap details from database
-    const { data: swapData } = await supabase
-      .from('swaps')
-      .select('*')
-      .eq('swap_id', swapId)
-      .maybeSingle();
-
-    if (!swapData) {
-      res.status(404).json({ error: 'Swap not found' });
-      return;
-    }
-
-    const keys: ECPairFactory = ECPairFactory(ecc).fromPrivateKey(Buffer.from(swapData.privateKey, 'hex'));
-    const boltzPublicKey = Buffer.from(swapData.refundPubKey, 'hex');
-
-    // Create a musig signing session
-    const musig = new Musig(zkp, keys, randomBytes(32), [
-      boltzPublicKey,
-      Buffer.from(keys.publicKey),
-    ]);
-
-    // Tweak the key with the swap tree
-    const tweakedKey = LiquidTaprootUtils.tweakMusig(
-      musig,
-      SwapTreeSerializer.deserializeSwapTree(swapData.swapTree).tree,
-    );
-
-    // Parse and verify the lockup transaction
-    const lockupTx = Transaction.fromHex(transaction.hex);
-    const swapOutput = detectSwap(tweakedKey, lockupTx);
-
-    if (!swapOutput) {
-      res.status(400).json({ error: 'No swap output found in lockup transaction' });
-      return;
-    }
-
-    // Create claim transaction
-    const claimTx = targetFee(0.1, (fee) =>
-      constructClaimTransaction(
-        [{
-          ...swapOutput,
-          keys,
-          preimage: Buffer.from(swapData.preImage, 'hex'),
-          cooperative: true,
-          type: OutputType.Taproot,
-          txHash: lockupTx.getHash(),
-          // value: Number(swapOutput.value),
-          blindingPrivateKey: Buffer.from(swapData.blindingKey, 'hex'),
-        }],
-        address.toOutputScript(swapData.claimAddress, networks.liquid),
-        fee,
-        false
-      ), true,
-    );
-
-    // Get Boltz's partial signature
-    const boltzSig = (
-      await axios.post(
-        `${process.env.BOLTZ_API_URL}/swap/reverse/${swapId}/claim`,
-        {
-          index: 0,
-          transaction: claimTx.toHex(),
-          preimage: swapData.preImage,
-          pubNonce: Buffer.from(musig.getPublicNonce()).toString('hex'),
-        },
-      )
-    ).data;
-
-    // Aggregate nonces
-    musig.aggregateNonces([
-      [boltzPublicKey, Buffer.from(boltzSig.pubNonce, 'hex')],
-    ]);
-
-    // Initialize signing session
-    musig.initializeSession(
-      claimTx.hashForWitnessV1(
-        0,
-        [swapOutput.script],
-        [{ value: swapOutput.value, asset: swapOutput.asset }],
-        // [Number(swapOutput.value)],
-        Transaction.SIGHASH_DEFAULT,
-        networks.liquid.genesisBlockHash,
-      ),
-    );
-
-    // Add Boltz's partial signature
-    musig.addPartial(
-      boltzPublicKey,
-      Buffer.from(boltzSig.partialSignature, 'hex'),
-    );
-
-    // Create our partial signature
-    musig.signPartial();
-
-    // Add witness with aggregated signature
-    claimTx.ins[0].witness = [musig.aggregatePartials()];
-
-    // Broadcast the claim transaction
-    await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, {
-      hex: claimTx.toHex(),
-    });
-
-    console.log('Claim transaction broadcast successfully');
-
+    await claimSwap(swapId);
     res.json({ message: 'Claim transaction broadcast successfully' });
   } catch (error) {
     console.error('Error processing swap webhook:', error);

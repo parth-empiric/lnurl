@@ -50,3 +50,13 @@ export interface PaymentResponse {
   pr: string;
   route: any[];
 } 
+
+export interface LockupTransactionResponse {
+  hex: string;
+  txid: string;
+}
+
+export interface BoltzClaimResponse {
+  pubNonce: string;
+  partialSignature: string;
+}
