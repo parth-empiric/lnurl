@@ -348,7 +348,6 @@ app.listen(PORT, () => {
 const limit = pLimit(5);
 const processExistingSwaps = async () => {
   const { data: swaps } = await supabase.from('swaps').select('*').in('status', ['swap.created', 'transaction.mempool']).gte('created_at', new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString());
-  console.log('swaps', swaps);
   if (!swaps || swaps.length === 0) return;
 
   await Promise.all(swaps.map(swap =>
