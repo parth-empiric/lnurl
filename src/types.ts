@@ -6,7 +6,9 @@ export interface User {
 }
 
 export interface Swap {
+  id: number;
   swap_id: string;
+  status: string;
   wallet_id: string;
   amount: string;
   note?: string;
@@ -15,14 +17,15 @@ export interface Swap {
   privateKey: string;
   pubKey: string;
   claimAddress: string;
+  addressSignature: string;
   invoice: string;
   swapTree: string;
   lockupAddress: string;
   refundPubKey: string;
-  refundAddress: string;
   timeoutBlockHeight: number;
   onChainAmount: string;
   blindingKey: string;
+  created_at: Date;
 }
 
 export interface LNURLPayResponse {
@@ -44,12 +47,9 @@ export interface BoltzResponse {
   timeoutBlockHeight: number;
   onchainAmount: string;
   blindingKey: string;
+  description: string;
+  addressSignature: string;
 }
-
-export interface PaymentResponse {
-  pr: string;
-  route: any[];
-} 
 
 export interface LockupTransactionResponse {
   hex: string;

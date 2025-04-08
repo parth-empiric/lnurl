@@ -7,7 +7,6 @@ import {
   Swap,
   LNURLPayResponse,
   BoltzResponse,
-  PaymentResponse,
   LockupTransactionResponse,
   BoltzClaimResponse
 } from './types.js';
@@ -135,7 +134,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const addressSignature = Buffer.from(keys.signSchnorr(liquidAddressHash)).toString('hex');
 
   try {
-    const boltzResponse = await axios.post<BoltzResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse`, {
+    const boltzData = (await axios.post<BoltzResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse`, {
       invoiceAmount: Math.floor(amountValue / 1000),
       to: 'L-BTC',
       from: 'BTC',
@@ -150,9 +149,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       webhook: {
         url: `https://${req.get('host')}/webhook/swap`,
       }
-    });
-
-    const boltzData = boltzResponse.data;
+    })).data;
 
     // Update user's addresses
     const index = user.liquid_addresses.indexOf(liquidAddress);
@@ -170,10 +167,12 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       .eq('uuid', uuid);
 
     const swap: Swap = {
+      id: -1,
       swap_id: boltzData.id,
+      status: 'swap.created',
       wallet_id: user.uuid,
       amount: amount,
-      note: note,
+      note: boltzData.description,
       preImage: preimage.toString('hex'),
       preImageHash: preimageHash,
       privateKey: privKeyHex,
@@ -183,20 +182,19 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       swapTree: JSON.stringify(boltzData.swapTree),
       lockupAddress: boltzData.lockupAddress,
       refundPubKey: boltzData.refundPublicKey,
-      refundAddress: boltzData.refundAddress,
       timeoutBlockHeight: boltzData.timeoutBlockHeight,
       onChainAmount: boltzData.onchainAmount,
       blindingKey: boltzData.blindingKey,
+      addressSignature: boltzData.addressSignature,
+      created_at: new Date()
     };
 
     await supabase.from('swaps').insert(swap);
 
-    const response: PaymentResponse = {
+    res.json({
       pr: boltzData.invoice,
       route: []
-    };
-
-    res.json(response);
+    });
     return;
   } catch (error) {
     console.error('Error creating invoice:', error);
@@ -316,13 +314,18 @@ const createReverseClaimTransaction = async (
   }
 };
 
-// Webhook endpoint for Boltz swap updates
-router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
-  if (req.body.event !== 'swap.update') {
-    res.json({ message: 'No event found!' });
+const processExistingSwaps = async () => {
+  const { data } = await supabase.from('swaps').select('*').eq('status', 'swap.created');
+  if (!data) {
     return;
   }
+  for (const swap of data) {
+    claimSwap(swap.swap_id);
+  }
+}
 
+// Webhook endpoint for Boltz swap updates
+router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
   if (!req.body.data || !req.body.data.id || !req.body.data.status) {
     res.json({ message: 'No data found!' });
     return;
@@ -333,6 +336,7 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     res.json({ message: 'Status not handled' });
     return;
   }
+  await supabase.from('swaps').update({ status: status }).eq('swap_id', swapId);
 
   try {
     await claimSwap(swapId);
