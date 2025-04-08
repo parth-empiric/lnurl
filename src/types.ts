@@ -6,7 +6,6 @@ export interface User {
 }
 
 export interface Swap {
-  id: number;
   swap_id: string;
   status: string;
   wallet_id: string;
@@ -17,7 +16,6 @@ export interface Swap {
   privateKey: string;
   pubKey: string;
   claimAddress: string;
-  addressSignature: string;
   invoice: string;
   swapTree: string;
   lockupAddress: string;
@@ -25,7 +23,7 @@ export interface Swap {
   timeoutBlockHeight: number;
   onChainAmount: string;
   blindingKey: string;
-  created_at: Date;
+  created_at?: Date;
 }
 
 export interface LNURLPayResponse {

@@ -2,6 +2,7 @@ import express, { Request, Response, Router } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import pLimit from 'p-limit';
 import {
   User,
   Swap,
@@ -81,6 +82,7 @@ router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response):
 
 // Callback endpoint for generating Bolt11 invoice
 router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> => {
+  console.log('payreq', req.params, req.query);
   const uuid = req.params.uuid;
   const amount = req.query.amount as string;
   const note = (req.query.note || req.query.label) as string | undefined;
@@ -132,6 +134,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const pubKeyHex = Buffer.from(keys.publicKey).toString('hex');
   const liquidAddressHash = crypto.sha256(Buffer.from(liquidAddress, 'utf-8'));
   const addressSignature = Buffer.from(keys.signSchnorr(liquidAddressHash)).toString('hex');
+  const noteText = note ?? 'Payment to manna wallet user: ' + user.user_name;
 
   try {
     const boltzData = (await axios.post<BoltzResponse>(`${process.env.BOLTZ_API_URL}/swap/reverse`, {
@@ -144,7 +147,7 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       claimAddress: liquidAddress,
       address: liquidAddress,
       addressSignature: addressSignature,
-      description: note ?? 'Payment to manna wallet user: ' + user.user_name,
+      description: noteText,
       referralId: 'Manna',
       webhook: {
         url: `https://${req.get('host')}/webhook/swap`,
@@ -167,12 +170,11 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       .eq('uuid', uuid);
 
     const swap: Swap = {
-      id: -1,
       swap_id: boltzData.id,
       status: 'swap.created',
       wallet_id: user.uuid,
       amount: amount,
-      note: boltzData.description,
+      note: noteText,
       preImage: preimage.toString('hex'),
       preImageHash: preimageHash,
       privateKey: privKeyHex,
@@ -185,8 +187,6 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
       timeoutBlockHeight: boltzData.timeoutBlockHeight,
       onChainAmount: boltzData.onchainAmount,
       blindingKey: boltzData.blindingKey,
-      addressSignature: boltzData.addressSignature,
-      created_at: new Date()
     };
 
     await supabase.from('swaps').insert(swap);
@@ -314,16 +314,6 @@ const createReverseClaimTransaction = async (
   }
 };
 
-const processExistingSwaps = async () => {
-  const { data } = await supabase.from('swaps').select('*').eq('status', 'swap.created');
-  if (!data) {
-    return;
-  }
-  for (const swap of data) {
-    claimSwap(swap.swap_id);
-  }
-}
-
 // Webhook endpoint for Boltz swap updates
 router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> => {
   if (!req.body.data || !req.body.data.id || !req.body.data.status) {
@@ -336,6 +326,7 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
     res.json({ message: 'Status not handled' });
     return;
   }
+  console.log('webhook', req.body);
   await supabase.from('swaps').update({ status: status }).eq('swap_id', swapId);
 
   try {
@@ -354,3 +345,29 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
+const limit = pLimit(5);
+const processExistingSwaps = async () => {
+  const { data: swaps } = await supabase.from('swaps').select('*').in('status', ['swap.created', 'transaction.mempool']).gte('created_at', new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString());
+  console.log('swaps', swaps);
+  if (!swaps || swaps.length === 0) return;
+
+  await Promise.all(swaps.map(swap =>
+    limit(async () => {
+      try {
+        const newStatus = (await axios.get(`${process.env.BOLTZ_API_URL}/swap/${swap.swap_id}`)).data.status;
+
+        if (newStatus === 'transaction.mempool') {
+          await claimSwap(swap.swap_id);
+        }
+
+        if (newStatus !== swap.status) {
+          await supabase.from('swaps').update({ status: newStatus }).eq('swap_id', swap.swap_id);
+        }
+      } catch (err) {
+        console.error(`Failed processing swap ${swap.swap_id}`, err);
+      }
+    })
+  ));
+};
+
+setInterval(processExistingSwaps, 60000);

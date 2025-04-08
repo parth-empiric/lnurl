@@ -24,6 +24,7 @@
     "ecpair": "^3.0.0",
     "elliptic": "^6.5.4",
     "express": "^4.18.3",
+    "p-limit": "^6.2.0",
     "tiny-secp256k1": "^2.2.3"
   },
   "devDependencies": {
