@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import pLimit from 'p-limit';
+import cors from 'cors';
 import {
   User,
   Swap,
@@ -68,7 +69,7 @@ router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response):
   const responseData: LNURLPayResponse = {
     callback: `${req.protocol}://${req.get('host')}/payreq/${data.uuid}`,
     maxSendable: 25000000000,
-    minSendable: 1000000,
+    minSendable: 100000,
     metadata: JSON.stringify([
       ['text/plain', `Pay to manna wallet user: ${userName}`],
       ['text/identifier', `${userName}@mannabitcoin.com`],
@@ -88,11 +89,11 @@ router.get('/payreq/:uuid', async (req: Request, res: Response): Promise<void> =
   const note = (req.query.note || req.query.label || req.query.comment || req.query.message) as string | undefined;
   const amountValue = parseInt(amount || '', 10);
 
-  if (!amount || isNaN(amountValue) || amountValue < 1000000 || amountValue > 25000000000) {
+  if (!amount || isNaN(amountValue) || amountValue < 100000 || amountValue > 25000000000) {
     res.status(404).json({
       status: 'ERROR',
       reason: amount
-        ? 'Amount is not within valid millisatoshi limits: 1000000 - 25000000000'
+        ? 'Amount is not within valid millisatoshi limits: 100000 - 25000000000'
         : 'amount not supplied',
     });
     return;
@@ -339,8 +340,10 @@ router.post('/webhook/swap', async (req: Request, res: Response): Promise<void> 
 });
 
 const app = express();
+app.use(cors());
 app.use(express.json());
-app.use(router); const PORT = process.env.PORT || 3000;
+app.use(router);
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
