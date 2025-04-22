@@ -73,13 +73,13 @@ router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response):
     .maybeSingle();
 
   if (!data) {
-    sendNotification(data!.fcm_token,'Wow', 'Notifications');
     res.status(200).json({
       status: 'ERROR',
       reason: 'Unable to find valid user wallet.',
     });
     return;
   }
+  sendNotification(data!.fcm_token,'Wow', 'Notifications');
 
   const responseData: LNURLPayResponse = {
     callback: `${req.protocol}://${req.get('host')}/payreq/${data.uuid}`,
