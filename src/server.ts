@@ -30,6 +30,20 @@ import { TaprootUtils as LiquidTaprootUtils, constructClaimTransaction } from "b
 import { init } from 'boltz-core/dist/lib/liquid/init.js';
 import { default as zkpInit, Secp256k1ZKP } from '@vulpemventures/secp256k1-zkp';
 import { LiquidSwapTree } from 'boltz-core/dist/lib/consts/Types.js';
+// notifications
+import { default as admin } from 'firebase-admin';
+
+const serviceAccount = {
+  projectId: "manna-lightning-429f8",
+  privateKey: "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCWUtfbSvyZ5MqW\nsxuosoXqVR8JLCjGqF69XX92x5diIs1iGSdOFitvaEy8vQ2phpgGsFwCGIvL7U5e\nmp7QNYyWH4TllOkYLvDJaz4fsqw3eLMhxGWvEEa+MXl52hoC0jszykDWBTQkTsql\nAM0jV5wPXlVCSg3m0Z6FBqPERldVHAek172okGckctWFh7NU3EjUshOxm65GXZXX\nG2JWiPt3Ij91nmiKgxsLltDp0ihcBqxJP41vfc0/zpOY4nIjPKV+Iqz4QfC19KjZ\noSX4mV/JKRQHGAXnWGyGSjyGfAX+FdnOMSGOCMH2sS2O/SApJQvNQPL5vG7VRjrl\nO15KWT/vAgMBAAECggEANcIImc7WSP7OCFijIpA9XdD1GWWma2zY/KWMKOE13Q2P\nH27ZZI5/GAdXsgN1+FM+2N2G+eTnUZVa+nAXLWSJE0LQVv4K4fAfghiNDe7qsafD\nf+bpalLKyceNpqr9tFaUf2/sAd24iOd4hsujkOkK0WAt41fyYsJCC1aViGKTZsbj\n6wsDBWGxWIQfOe8UA59nQlvrexXVt65L0/iXifFrXUBzZraKLcjUdkF0ymRfhhdt\nsxDdb4/uK9b7uo2TvDbDKBZA9aWGkuxxcImY8IqcooBM4n2/UToiTfP3rja+Not0\n/37zpNamJ7jzOjxIGtfU93xzk1NeI40Ki2gikmkCSQKBgQDNf2ta+YrzrguiLxAE\ntG7P0Gf+vqhFdgLNJuY9AYRod7Z5IfF0nMiRTFmy3ysbe7GLWqHq/4P1nKFF5r+K\nWfvGwtmcRKkS52W6K1xml8F0XFT/ru9iVo/JC1B+yt5BbueXAlMF+lmayoSdgwgo\n/RQNB425foe0RtfIZFzGlHiJ1QKBgQC7RDoKiBWTgg2BJuJP4nwZitMk5Xq8QltV\n3/JvId3LaD05oJACIsJd+mBPeCnrIWEBDb1nXJg/x2J7G37L715vLXrXI5LKd+ru\nlSgJd4CfNDGkDF5nTeBFGwacwTF5OI4G6BfKP001Gyp85ZcRjLDolZocs62QTrdY\nfbdeZF1gswKBgQCSEzNC9gP5+Aw4+29NiN0ESEbEZM7EoYCYSEB9uShgAkjpjmFO\n3WwNLNLOPaks3h50yrYyj/NDklVplP8u34wD29pIJN5ym55KWixSmSlhB4k8PyPX\nKWUIKkzL9HVM2gMx6usNYspzJ+Zg+RXB3TR1lpr98p2QXpNg1UbFuiB9CQKBgQCD\n2BQ5J/hw4yaY4ISDk8SlwwzHNF3GP73IZyRrw99A/4HjmbzqFAjeW5IFQWfZ6KVA\nNak9JX73oGwgmooaEMxe4BlVcPE/ZVBda1xF1gITlI7Cnga1GqokXVO5d3dajkvI\nZw2g0hKMqjSuvIIw0+oVxoY7YPF44ULKpbA9X9IyawKBgQCPKXcaFQMjyPm+G3+J\nPXVtfrYBMY73Zz1Qb52AfFXXWPYsfG9CiE+JJY5rGmCKxHKVIYHdby/AtQ0QSw1+\nvLQ5jBOP0X97clISioX5a42lCIsUkflFC4MbUWN7P8BtSyoIh8/dreG7wv1rJB+s\nxXyAl4fOzKgF3lrPjW9dIoyFPg==\n-----END PRIVATE KEY-----\n",
+  clientEmail: "firebase-adminsdk-nibib@manna-lightning-429f8.iam.gserviceaccount.com",
+};
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
+const messaging = admin.messaging();
 
 
 dotenv.config();
@@ -54,11 +68,12 @@ router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response):
   const userName = req.params.username;
   const { data } = await supabase
     .from('users')
-    .select('uuid')
+    .select('*')
     .eq('user_name', userName)
     .maybeSingle();
 
   if (!data) {
+    sendNotification(data!.fcm_token,'Wow', 'Notifications');
     res.status(200).json({
       status: 'ERROR',
       reason: 'Unable to find valid user wallet.',
@@ -228,7 +243,9 @@ const claimSwap = async (swapId: string) => {
     throw new Error('Failed to generate claim transaction');
   }
 
-  await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() });
+  const txId = (await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() })).data.id;
+  await supabase.from('swaps').update({ claim_tx_id: txId }).eq('swap_id', swapData.swap_id);
+
   console.log('Claim transaction broadcast successfully');
 }
 
@@ -343,6 +360,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(router);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
@@ -373,3 +391,17 @@ const processExistingSwaps = async () => {
 };
 
 setInterval(processExistingSwaps, 60000);
+
+
+const sendNotification = async (fcmToken: string, title: string, body: string) => {
+  const res = await messaging.send({
+    token: fcmToken,
+    notification: {
+      title: title,
+      body: body,
+    },
+    // extra data.
+    data: {}
+  });
+  console.log(`Notification sent! ${res}`);
+};
