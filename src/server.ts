@@ -79,7 +79,6 @@ router.get('/.well-known/lnurlp/:username', async (req: Request, res: Response):
     });
     return;
   }
-  sendNotification(data!.fcm_token,'Wow', 'Notifications');
 
   const responseData: LNURLPayResponse = {
     callback: `${req.protocol}://${req.get('host')}/payreq/${data.uuid}`,
@@ -246,6 +245,10 @@ const claimSwap = async (swapId: string) => {
   const txId = (await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() })).data.id;
   await supabase.from('swaps').update({ claim_tx_id: txId }).eq('swap_id', swapData.swap_id);
 
+  const fcmToken = (await supabase.from('users').select('fcm_token').eq('uuid',data.wallet_id).maybeSingle()).data?.fcm_token;
+  if(fcmToken){
+    await sendNotification(fcmToken, 'Received!', `${data.onChainAmount - 19} sats`);
+  }
   console.log('Claim transaction broadcast successfully');
 }
 
@@ -403,5 +406,4 @@ const sendNotification = async (fcmToken: string, title: string, body: string) =
     // extra data.
     data: {}
   });
-  console.log(`Notification sent! ${res}`);
 };
