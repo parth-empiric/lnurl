@@ -33,23 +33,19 @@ import { LiquidSwapTree } from 'boltz-core/dist/lib/consts/Types.js';
 // notifications
 import { default as admin } from 'firebase-admin';
 
+dotenv.config();
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY || !process.env.FIREBASE_PRIVATE_KEY) {
+  throw new Error('Missing required environment variables');
+}
+
 const serviceAccount = {
   projectId: "manna-lightning-429f8",
-  privateKey: "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQCWUtfbSvyZ5MqW\nsxuosoXqVR8JLCjGqF69XX92x5diIs1iGSdOFitvaEy8vQ2phpgGsFwCGIvL7U5e\nmp7QNYyWH4TllOkYLvDJaz4fsqw3eLMhxGWvEEa+MXl52hoC0jszykDWBTQkTsql\nAM0jV5wPXlVCSg3m0Z6FBqPERldVHAek172okGckctWFh7NU3EjUshOxm65GXZXX\nG2JWiPt3Ij91nmiKgxsLltDp0ihcBqxJP41vfc0/zpOY4nIjPKV+Iqz4QfC19KjZ\noSX4mV/JKRQHGAXnWGyGSjyGfAX+FdnOMSGOCMH2sS2O/SApJQvNQPL5vG7VRjrl\nO15KWT/vAgMBAAECggEANcIImc7WSP7OCFijIpA9XdD1GWWma2zY/KWMKOE13Q2P\nH27ZZI5/GAdXsgN1+FM+2N2G+eTnUZVa+nAXLWSJE0LQVv4K4fAfghiNDe7qsafD\nf+bpalLKyceNpqr9tFaUf2/sAd24iOd4hsujkOkK0WAt41fyYsJCC1aViGKTZsbj\n6wsDBWGxWIQfOe8UA59nQlvrexXVt65L0/iXifFrXUBzZraKLcjUdkF0ymRfhhdt\nsxDdb4/uK9b7uo2TvDbDKBZA9aWGkuxxcImY8IqcooBM4n2/UToiTfP3rja+Not0\n/37zpNamJ7jzOjxIGtfU93xzk1NeI40Ki2gikmkCSQKBgQDNf2ta+YrzrguiLxAE\ntG7P0Gf+vqhFdgLNJuY9AYRod7Z5IfF0nMiRTFmy3ysbe7GLWqHq/4P1nKFF5r+K\nWfvGwtmcRKkS52W6K1xml8F0XFT/ru9iVo/JC1B+yt5BbueXAlMF+lmayoSdgwgo\n/RQNB425foe0RtfIZFzGlHiJ1QKBgQC7RDoKiBWTgg2BJuJP4nwZitMk5Xq8QltV\n3/JvId3LaD05oJACIsJd+mBPeCnrIWEBDb1nXJg/x2J7G37L715vLXrXI5LKd+ru\nlSgJd4CfNDGkDF5nTeBFGwacwTF5OI4G6BfKP001Gyp85ZcRjLDolZocs62QTrdY\nfbdeZF1gswKBgQCSEzNC9gP5+Aw4+29NiN0ESEbEZM7EoYCYSEB9uShgAkjpjmFO\n3WwNLNLOPaks3h50yrYyj/NDklVplP8u34wD29pIJN5ym55KWixSmSlhB4k8PyPX\nKWUIKkzL9HVM2gMx6usNYspzJ+Zg+RXB3TR1lpr98p2QXpNg1UbFuiB9CQKBgQCD\n2BQ5J/hw4yaY4ISDk8SlwwzHNF3GP73IZyRrw99A/4HjmbzqFAjeW5IFQWfZ6KVA\nNak9JX73oGwgmooaEMxe4BlVcPE/ZVBda1xF1gITlI7Cnga1GqokXVO5d3dajkvI\nZw2g0hKMqjSuvIIw0+oVxoY7YPF44ULKpbA9X9IyawKBgQCPKXcaFQMjyPm+G3+J\nPXVtfrYBMY73Zz1Qb52AfFXXWPYsfG9CiE+JJY5rGmCKxHKVIYHdby/AtQ0QSw1+\nvLQ5jBOP0X97clISioX5a42lCIsUkflFC4MbUWN7P8BtSyoIh8/dreG7wv1rJB+s\nxXyAl4fOzKgF3lrPjW9dIoyFPg==\n-----END PRIVATE KEY-----\n",
+  privateKey: process.env.FIREBASE_PRIVATE_KEY,
   clientEmail: "firebase-adminsdk-nibib@manna-lightning-429f8.iam.gserviceaccount.com",
 };
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
-
+admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const messaging = admin.messaging();
-
-
-dotenv.config();
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
-  throw new Error('Missing required environment variables');
-}
 
 const router = Router();
 const supabase = createClient(
@@ -245,8 +241,8 @@ const claimSwap = async (swapId: string) => {
   const txId = (await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() })).data.id;
   await supabase.from('swaps').update({ claim_tx_id: txId }).eq('swap_id', swapData.swap_id);
 
-  const fcmToken = (await supabase.from('users').select('fcm_token').eq('uuid',data.wallet_id).maybeSingle()).data?.fcm_token;
-  if(fcmToken){
+  const fcmToken = (await supabase.from('users').select('fcm_token').eq('uuid', data.wallet_id).maybeSingle()).data?.fcm_token;
+  if (fcmToken) {
     await sendNotification(fcmToken, 'Received!', `${data.onChainAmount - 19} sats`);
   }
   console.log('Claim transaction broadcast successfully');
@@ -406,4 +402,7 @@ const sendNotification = async (fcmToken: string, title: string, body: string) =
     // extra data.
     data: {}
   });
+  if (res) {
+    console.log(`Notification sent to ${fcmToken}`);
+  }
 };
