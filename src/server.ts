@@ -239,7 +239,7 @@ const claimSwap = async (swapId: string) => {
   }
 
   const txId = (await axios.post(`${process.env.BOLTZ_API_URL}/chain/L-BTC/transaction`, { hex: claimTransaction.toHex() })).data.id;
-  await supabase.from('swaps').update({ claim_tx_id: txId }).eq('swap_id', swapData.swap_id);
+  await supabase.from('swaps').update({ claim_tx_id: txId, completed_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString() }).eq('swap_id', swapData.swap_id);
 
   const fcmToken = (await supabase.from('users').select('fcm_token').eq('uuid', data.wallet_id).maybeSingle()).data?.fcm_token;
   if (fcmToken) {
